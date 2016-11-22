@@ -77,7 +77,7 @@ class MDPTaskExecutor(BaseTaskExecutor):
         self.time_critical_tasks = SortedCollection(key=(lambda t: t.task.execution_time))
 
         # how late can tasks be expected to be before they're dropped at planning time
-        self.allowable_lateness = rospy.Duration(300)
+        self.allowable_lateness = rospy.Duration(1)
     
         self.state_lock = threading.Lock()
         self.mdp_exec_client = None
