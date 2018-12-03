@@ -2,6 +2,7 @@
 from strands_executive_msgs.msg import Task
 import rospy
 import json
+import yaml
 import requests
 
 from calendar import timegm
@@ -162,15 +163,26 @@ class GCal:
                  (end_before.secs, end_before.nsecs)
             sn = "start_node_id: '%s'" % gcal_event['location']
             en = "end_node_id: '%s'" % gcal_event['location']
+            desc_yaml = None
             if gcal_event.has_key('description'):
                 ds = "description: '%s'" % gcal_event['description']
+                try:
+                    desc_yaml = yaml.load(gcal_event['description'])
+                except Exception as e:
+                    rospy.logwarn('Error parsing yaml description %s' % e)
             else:
                 ds = "description: "
 
-            yaml = "{%s, %s, %s, %s, %s}" % (sa, eb, sn, en, ds)
+            yaml_s = "{%s, %s, %s, %s, %s}" % (sa, eb, sn, en, ds)
+            yaml_o = yaml.load(yaml_s)
 
-            rospy.loginfo("calling with pre-populated yaml: %s" % yaml)
-            t = factory.call(yaml).task
+            # override the fields specified in the task description
+            if desc_yaml is not None:
+                yaml_o.update(desc_yaml)
+                yaml_s = str(yaml_o)
+
+            rospy.loginfo("calling with pre-populated yaml: %s" % yaml_s)
+            t = factory.call(yaml_s).task
             rospy.loginfo("got the task back: %s" % str(t))
         except Exception as e:
             rospy.logwarn("Couldn't instantiate task from factory %s."

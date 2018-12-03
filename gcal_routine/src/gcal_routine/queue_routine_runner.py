@@ -76,7 +76,8 @@ class GCalRoutineRunner(object):
                     rospy.loginfo('setting priority of tasks to %d'
                                   % prio)
                     for t in tasks:
-                        t.priority = prio
+                        if not t.priority:
+                            t.priority = prio
 
                     rospy.loginfo('Sending %d tasks to the scheduler'
                                   % (len(tasks)))
