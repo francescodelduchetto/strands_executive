@@ -174,10 +174,10 @@ class GCal:
                 ds = "description: "
 
             yaml_s = "{%s, %s, %s, %s, %s}" % (sa, eb, sn, en, ds)
-            yaml_o = yaml.load(yaml_s)
 
             # override the fields specified in the task description
             if desc_yaml is not None:
+                yaml_o = yaml.load(yaml_s)
                 yaml_o.update(desc_yaml)
                 yaml_s = str(yaml_o)
 
