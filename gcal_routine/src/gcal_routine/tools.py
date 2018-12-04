@@ -161,8 +161,12 @@ class GCal:
                  (start_after.secs, start_after.nsecs)
             eb = "end_before: {secs: %d, nsecs: %d}" % \
                  (end_before.secs, end_before.nsecs)
-            sn = "start_node_id: '%s'" % gcal_event['location']
-            en = "end_node_id: '%s'" % gcal_event['location']
+            if gcal_event.has_key('location'):
+                sn = "start_node_id: '%s'" % gcal_event['location']
+                en = "end_node_id: '%s'" % gcal_event['location']
+            else:
+                sn = "start_node_id: ''"
+                en = "end_node_id: ''"
             desc_yaml = None
             if gcal_event.has_key('description'):
                 ds = "description: '%s'" % gcal_event['description']
