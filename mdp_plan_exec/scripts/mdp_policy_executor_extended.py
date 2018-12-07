@@ -18,9 +18,13 @@ from strands_navigation_msgs.msg import NavRoute, ExecutePolicyModeAction, Execu
 from strands_executive_msgs.msg import ExecutePolicyAction, ExecutePolicyFeedback, ExecutePolicyGoal
 from strands_executive_msgs.msg import ExecutePolicyExtendedAction, ExecutePolicyExtendedFeedback, ExecutePolicyExtendedGoal
 
-   
+from topological_navigation.msg import GotoNodeAction, GotoNodeActionGoal, GotoNodeGoal
+
+
 class MdpPolicyExecutor(object):
-    def __init__(self, port, file_dir, file_name): 
+    def __init__(self, port, file_dir, file_name):
+
+        self.use_standard_navigation = True
 
         self.wait_for_result_dur=rospy.Duration(0.1)
         self.top_nav_policy_exec= SimpleActionClient('topological_navigation/execute_policy_mode', ExecutePolicyModeAction)
@@ -30,18 +34,26 @@ class MdpPolicyExecutor(object):
             got_server=self.top_nav_policy_exec.wait_for_server(rospy.Duration(1))
             if rospy.is_shutdown():
                 return
-        
+
+        self.normal_top_nav= SimpleActionClient('topological_navigation', GotoNodeAction)
+        got_server=self.normal_top_nav.wait_for_server(rospy.Duration())
+        while not got_server:
+            rospy.loginfo("Waiting for topological navigation normal action server.")
+            got_server=self.normal_top_nav.wait_for_server(rospy.Duration(1))
+            if rospy.is_shutdown():
+                return
+
         explicit_doors = rospy.get_param("mdp_plan_exec/explicit_doors", True)
         forget_doors = rospy.get_param("mdp_plan_exec/forget_doors", True)
         model_fatal_fails = rospy.get_param("mdp_plan_exec/model_fatal_fails", True)
-        
+
         self.nav_before_action_exec = rospy.get_param("mdp_plan_exec/nav_before_action_exec", True) #If True the robot will always navigate to a waypoint before trying to execute an action; if False robot can execute actions anywhere, if they are added without waypoint constraints.
-        
-        
+
+
         self.mdp=TopMapMdp(explicit_doors=explicit_doors, forget_doors=forget_doors, model_fatal_fails=model_fatal_fails)
         self.policy_mdp=None
         self.current_nav_policy_state_defs={}
-        
+
         self.directory = file_dir
         self.file_name = file_name
         try:
@@ -49,38 +61,38 @@ class MdpPolicyExecutor(object):
         except OSError as ex:
             print 'error creating PRISM directory:',  ex
         self.prism_policy_generator=PartialSatPrismJavaTalker(port,self.directory, self.file_name)
-        
-               
+
+
         self.current_waypoint=None
         self.closest_waypoint=None
         self.current_waypoint_sub=rospy.Subscriber("current_node", String, self.current_waypoint_cb)
         self.closest_waypoint_sub=rospy.Subscriber("closest_node", String, self.closest_waypoint_cb)
         self.regenerate_policy=True
         self.policy_mode_pub=rospy.Publisher("mdp_plan_exec/current_policy_mode", NavRoute,queue_size=1)
-        
+
         self.action_executor=ActionExecutor()
-        
+
         self.cancelled=False
         self.mdp_as=SimpleActionServer('mdp_plan_exec/execute_policy_extended', ExecutePolicyExtendedAction, execute_cb = self.execute_policy_cb, auto_start = False)
         self.mdp_as.register_preempt_callback(self.preempt_policy_execution_cb)
         self.mdp_as.start()
-        
+
 
     def current_waypoint_cb(self,msg):
         self.current_waypoint=msg.data
-        
+
     def closest_waypoint_cb(self,msg):
         self.closest_waypoint=msg.data
 
-    def generate_prism_specification(self, ltl_spec):       
+    def generate_prism_specification(self, ltl_spec):
         return 'partial(R{"time"}min=? [ (' + ltl_spec + ') ])'
-    
+
     def get_current_action(self):
         if self.policy_mdp.flat_state_policy.has_key(self.current_flat_state):
             return self.policy_mdp.flat_state_policy[self.current_flat_state]
         else:
             return ''
-    
+
     def generate_policy_mdp(self,specification):
         #update initial state
         self.mdp.set_initial_state_from_waypoint(self.closest_waypoint)
@@ -99,7 +111,7 @@ class MdpPolicyExecutor(object):
         else:
             rospy.logwarn("Error generating policy. Aborting...")
             self.policy_mdp=None
-            
+
 
     def generate_current_nav_policy(self):
         policy_msg = NavRoute()
@@ -124,9 +136,9 @@ class MdpPolicyExecutor(object):
         self.regenerate_policy=False
         self.policy_mode_pub.publish(policy_msg)
         return policy_msg
-    
-    
-    def execute_nav_policy(self, nav_policy_msg):        
+
+
+    def execute_nav_policy(self, nav_policy_msg):
         self.top_nav_policy_exec.send_goal(ExecutePolicyModeGoal(route = nav_policy_msg), feedback_cb = self.top_nav_feedback_cb)
         nav_policy_finished=self.top_nav_policy_exec.wait_for_result(self.wait_for_result_dur)
         while not nav_policy_finished:
@@ -135,33 +147,48 @@ class MdpPolicyExecutor(object):
                 print(nav_policy_msg)
                 self.top_nav_policy_exec.send_goal(ExecutePolicyModeGoal(route = nav_policy_msg), feedback_cb = self.top_nav_feedback_cb)
             nav_policy_finished=self.top_nav_policy_exec.wait_for_result(self.wait_for_result_dur)
-        status=self.top_nav_policy_exec.get_state()  
+        status=self.top_nav_policy_exec.get_state()
         return status
-    
+
+    def execute_normal_nav_policy(self, goal_node):
+        self.normal_top_nav.send_goal(GotoNodeGoal(target = goal_node), feedback_cb = self.normal_top_nav_feedback_cb)
+        normal_nav_finished = self.normal_top_nav.wait_for_result(self.wait_for_result_dur)
+        while not normal_nav_finished:
+            #if self.regenerate_policy:
+            #    self.normal_top_nav.send_goal(GotoNodeGoal(target = goal_node), feedback_cb = self.normal_top_nav_feedback_cb)
+            normal_nav_finished = self.normal_top_nav.wait_for_result(self.wait_for_result_dur)
+
+        self.get_next_nav_policy_state(goal_node)
+        status=self.normal_top_nav.get_state()
+        return status
+
     def top_nav_feedback_cb(self,feedback):
         rospy.loginfo("Reached waypoint " + feedback.route_status)
         self.get_next_nav_policy_state(feedback.route_status)
-        
+
+    def normal_top_nav_feedback_cb(self,feedback):
+        rospy.loginfo("Feedback: " + feedback.route)
+
     def get_next_nav_policy_state(self, current_waypoint):
         executed_action=self.get_current_action()
         waypoint_val=self.mdp.get_waypoint_var_val(current_waypoint)
         current_state_def=self.current_nav_policy_state_defs[self.current_flat_state]
-        
+
         #waypoint didnt change
         if waypoint_val==current_state_def["waypoint"]:
             return
-        
+
         found_next_state=False
-        
+
         #waypoint change is on the MDP transition model
         for (flat_state, flat_state_def) in self.current_nav_policy_state_defs.items():
-            print(flat_state_def)           
+            print(flat_state_def)
             if flat_state_def["waypoint"]==waypoint_val:
                 self.current_flat_state=flat_state
                 found_next_state=True
                 break
-                
-        if not found_next_state: 
+
+        if not found_next_state:
             rospy.logwarn("Error getting MDP next state: There is no transition modelling the state evolution. Looking for state in full state list...")
             new_state_def=deepcopy(current_state_def)
             new_state_def["waypoint"]=waypoint_val
@@ -172,8 +199,8 @@ class MdpPolicyExecutor(object):
                     found_next_state=True
                     self.regenerate_policy=True #Assumes full policy export. In case we stop exporting full policy, change this so that replan is triggered when the new state doesnt have an action associated to it.
                     break
-            
-        if found_next_state:    
+
+        if found_next_state:
             next_action=self.get_current_action()
             if self.policy_mdp.flat_state_defs[self.current_flat_state]['waypoint']==-1:
                 outcome=GoalStatus.ABORTED
@@ -184,7 +211,7 @@ class MdpPolicyExecutor(object):
             rospy.logerr("Couldn't update state. Aborting...")
             self.current_flat_state=None
             self.top_nav_policy_exec.cancel_all_goals()
-       
+
     def get_mdp_state_update_from_action_outcome(self, state_update):
         #current_state_def=self.current_nav_policy_state_defs[self.current_flat_state]
         current_state_def=deepcopy(self.policy_mdp.flat_state_defs[self.current_flat_state])
@@ -202,7 +229,7 @@ class MdpPolicyExecutor(object):
         specification=self.generate_prism_specification(goal.spec.ltl_task)
         self.mdp.create_top_map_mdp_structure()
         self.mdp.add_extra_domain(goal.spec.vars, goal.spec.actions)
-        
+
         rospy.loginfo("The specification is: " + specification)
         self.generate_policy_mdp(specification)
         if self.policy_mdp is None:
@@ -211,20 +238,28 @@ class MdpPolicyExecutor(object):
             return
         self.current_flat_state=self.policy_mdp.initial_flat_state
         self.publish_feedback(None, None, self.get_current_action())
-        
+
         if self.nav_before_action_exec:
+            # Francesco add
             current_nav_policy=self.generate_current_nav_policy()
-            status=self.execute_nav_policy(current_nav_policy)
+            if self.use_standard_navigation:
+                if len(goal.spec.actions[0].waypoints) > 0:
+                    goal_node = goal.spec.actions[0].waypoints[0]
+                    status=self.execute_normal_nav_policy(goal_node)
+                    rospy.loginfo("Normal nav status %s" % status)
+            else:
+                status=self.execute_nav_policy(current_nav_policy)
+
         while self.policy_mdp.flat_state_policy.has_key(self.current_flat_state) and not self.cancelled:
             next_action=self.get_current_action()
             if next_action in self.mdp.nav_actions:
                 current_nav_policy=self.generate_current_nav_policy()
                 status=self.execute_nav_policy(current_nav_policy)
-                rospy.loginfo("Topological navigation execute policy action server exited with status: " + GoalStatus.to_string(status))                
+                rospy.loginfo("Topological navigation execute policy action server exited with status: " + GoalStatus.to_string(status))
                 if status!=GoalStatus.SUCCEEDED:
 
                     # If mdp exec was preempted, this may cause the top nav to be preempted
-                    # Therefore we need to make sure that the cancellation flag is switched off 
+                    # Therefore we need to make sure that the cancellation flag is switched off
                     # as it won't reach line 218 where it is otherwise reset.
                     self.cancelled=False
 
@@ -251,8 +286,8 @@ class MdpPolicyExecutor(object):
                 else:
                     break
 
-        
-        
+
+
         if self.cancelled:
             self.cancelled=False
             rospy.loginfo("Policy execution preempted.")
@@ -271,31 +306,30 @@ class MdpPolicyExecutor(object):
                                                                 execution_status=status,
                                                                 next_action=next_action))
 
-    def preempt_policy_execution_cb(self):     
+    def preempt_policy_execution_cb(self):
         self.top_nav_policy_exec.cancel_all_goals()
+        self.normal_top_nav.cancel_all_goals()
         self.action_executor.cancel_all_goals()
         self.cancelled=True
 
-     
+
     def main(self):
         # Wait for control-c
-        rospy.spin()       
+        rospy.spin()
         if rospy.is_shutdown():
             self.prism_policy_generator.shutdown(True)
 
 if __name__ == '__main__':
     rospy.init_node('mdp_policy_executor_extended')
-    
+
     filtered_argv=rospy.myargv(argv=sys.argv)
-    
+
     if len(filtered_argv)!=4:
         rospy.logerr("Usage: rosrun mdp_plan_exec mdp_policy_executor_extended port file_dir model_file")
     else:
         port = filtered_argv[1]
         file_dir= filtered_argv[2]
-        model_file = filtered_argv[3] 
+        model_file = filtered_argv[3]
 
         mdp_executor =  MdpPolicyExecutor(int(port), file_dir, model_file)
         mdp_executor.main()
-        
-    
