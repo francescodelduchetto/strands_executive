@@ -239,16 +239,20 @@ class MdpPolicyExecutor(object):
         self.current_flat_state=self.policy_mdp.initial_flat_state
         self.publish_feedback(None, None, self.get_current_action())
 
-        if self.nav_before_action_exec:
+        # if the waypoint is pecified go there
+	if len(goal.spec.actions[0].waypoints) > 0:
             # Francesco add
             current_nav_policy=self.generate_current_nav_policy()
             if self.use_standard_navigation:
-                if len(goal.spec.actions[0].waypoints) > 0:
-                    goal_node = goal.spec.actions[0].waypoints[0]
-                    status=self.execute_normal_nav_policy(goal_node)
-                    rospy.loginfo("Normal nav status %s" % status)
+                goal_node = goal.spec.actions[0].waypoints[0]
+                status=self.execute_normal_nav_policy(goal_node)
+                rospy.loginfo("Normal nav status %s" % status)
             else:
                 status=self.execute_nav_policy(current_nav_policy)
+        # else go to a waypoint only if we want to always exec in a waypoint
+        elif self.nav_before_action_exec:
+            current_nav_policy=self.generate_current_nav_policy()
+            status=self.execute_nav_policy(current_nav_policy)
 
         while self.policy_mdp.flat_state_policy.has_key(self.current_flat_state) and not self.cancelled:
             next_action=self.get_current_action()
