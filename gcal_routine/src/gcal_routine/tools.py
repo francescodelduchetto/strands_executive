@@ -141,6 +141,7 @@ class GCal:
             return False
 
     def task_from_gcal(self, gcal_event):
+        rospy.loginfo(gcal_event['start'])
         start = parser.parse(gcal_event['start']['dateTime'])
         start_utc = start.astimezone(self.tz_utc)
         end = parser.parse(gcal_event['end']['dateTime'])

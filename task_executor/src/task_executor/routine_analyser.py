@@ -33,7 +33,8 @@ class RoutineAnalyser(cmd.Cmd):
         # hand code for now
         self.days_off = days_off
         self.tz = tz
-        self.colour_mappings = dict()
+        self.colour_mappings = {"guided_tour": "#33a02c", "goto_and_describe": "#ff7f00", "describe_exhibit": "#6a3d9a", "/tour_guide_activation": "#1f78b4", "/roam_task_server": "#a6cee3"}
+        self.label_mappings = {"guided_tour": "Guided tour", "goto_and_describe": "Go to exhibit and describe", "describe_exhibit": "Describe exhibit", "/roam_task_server": "Roaming", "/tour_guide_activation": "Operations start/stop"}
 
 
     def check_idx(self, idx):
@@ -237,16 +238,28 @@ class RoutineAnalyser(cmd.Cmd):
         start_midnight = datetime.fromordinal(rostime_to_python(start_time, self.tz).date().toordinal())
         start_midnight = start_midnight.replace(tzinfo=self.tz)
 
+        
         start = (rostime_to_python(start_time, self.tz) - start_midnight).total_seconds()
         end = (rostime_to_python(end_time, self.tz) - start_midnight).total_seconds()
-
+        if start_midnight.month > 3 or (start_midnight.month > 2 and start_midnight.day > 30):
+            start += 60 * 60
+            end += 60 * 60
+        #if (end - start) < 120:
+            #print action, (end - start)
+            #end = start + 120
         label = None
         if action not in self.colour_mappings:
             colour_map = plt.get_cmap('Paired')    
-            self.colour_mappings[action] = colour_map(len(self.colour_mappings) * 30)         
-            label = action
+            self.colour_mappings[action] = colour_map(len(self.colour_mappings)* 40)         
 
-        plt.hlines(y, start, end, self.colour_mappings[action], lw=6, label=label)
+        if action not in self.label_mappings:
+            #print "_%s_" % action
+            return
+            #self.label_mappings[action] = action
+
+        plt.hlines(y, start, end, self.colour_mappings[action], lw=6, label=self.label_mappings[action])
+
+        self.label_mappings[action] = None
 
     def do_days(self, idx): 
         try: 
@@ -284,34 +297,52 @@ class RoutineAnalyser(cmd.Cmd):
             if not self.check_idx(idx):
                 return
 
-            window_start = rostime_to_python(self.routine_pairs[idx][0].time, self.tz)
-            window_end = rostime_to_python(self.routine_pairs[idx][1].time, self.tz)
+            window_start = rostime_to_python(self.routine_pairs[idx][0].time, self.tz) - timedelta(hours=3)
+            window_end = rostime_to_python(self.routine_pairs[idx][1].time, self.tz) + timedelta(hours=1)
 
+            tot_tasks = 0
             daily_tasks = []
             for daily_start, daily_end in daily_windows_in_range(self.daily_start, self.daily_end, window_start, window_end, self.days_off):
-                
+#                succeeded_tasks = np.array([(task_group[0].task.action, task_group[0].time, task_group[1].time) for task_group in task_groups_in_window(daily_start, daily_end, self.msg_store, event=[TaskEvent.TASK_STARTED, TaskEvent.TASK_SUCCEEDED]) if len(task_group) > 1], dtype=object)
+#                failed_tasks = np.array([(task_group[0].task.action, task_group[0].time, task_group[1].time) for task_group in task_groups_in_window(daily_start, daily_end, self.msg_store, event=[TaskEvent.TASK_STARTED, TaskEvent.TASK_FAILED]) if len(task_group) > 1], dtype=object)        
                 succeeded_tasks = np.array([(task_group[0].task.action, task_group[0].time, task_group[1].time) for task_group in task_groups_in_window(daily_start, daily_end, self.msg_store, event=[TaskEvent.TASK_STARTED, TaskEvent.TASK_SUCCEEDED])], dtype=object)
+                print window_start, window_end
+                print daily_start, daily_end
+                #print succeeded_tasks
                 failed_tasks = np.array([(task_group[0].task.action, task_group[0].time, task_group[1].time) for task_group in task_groups_in_window(daily_start, daily_end, self.msg_store, event=[TaskEvent.TASK_STARTED, TaskEvent.TASK_FAILED])], dtype=object)        
+                stopped_tasks = np.array([(task_group[0].task.action, task_group[0].time, task_group[1].time) for task_group in task_groups_in_window(daily_start, daily_end, self.msg_store, event=[TaskEvent.TASK_STARTED, TaskEvent.TASK_STOPPED])], dtype=object)
+                cancelled_tasks = np.array([(task_group[0].task.action, task_group[0].time, task_group[1].time) for task_group in task_groups_in_window(daily_start, daily_end, self.msg_store, event=[TaskEvent.TASK_STARTED, TaskEvent.CANCELLED_MANUALLY])], dtype=object)
+                dropped_tasks = np.array([(task_group[0].task.action, task_group[0].time, task_group[1].time) for task_group in task_groups_in_window(daily_start, daily_end, self.msg_store, event=[TaskEvent.TASK_STARTED, TaskEvent.DROPPED], action="guided_tour")], dtype=object)
                 # print len(succeeded_tasks)
                 # print len(failed_tasks)
 
+                all_tasks = []
+                to_concat = [arr for arr in [succeeded_tasks, failed_tasks, stopped_tasks, cancelled_tasks, dropped_tasks] if len(arr) > 0]
                 # can't concatenate 0  length np.arrays
-                if len(succeeded_tasks) == 0:
-                    all_tasks = failed_tasks
-                elif len(failed_tasks) == 0:
-                    # print succeeded_tasks
-                    all_tasks = succeeded_tasks
-                else:
-                    all_tasks = np.concatenate((succeeded_tasks,failed_tasks), axis=0)
-                
+#                if len(succeeded_tasks) != 0:
+#                    all_tasks = succeeded_tasks
+#                if len(failed_tasks) != 0:
+#                    # print succeeded_tasks
+#                    all_tasks = np.concatenate((failed_tasks, all_tasks), axis=0)
+#                if len(stopped_tasks) != 0:
+#                    all_tasks = np.concatenate((stopped_tasks, all_tasks), axis=0)
+#                if len(cancelled_tasks) != 0:
+#                    all_tasks = np.concatenate((cancelled_tasks, all_tasks), axis=0)
+#                if len(dropped_tasks) != 0:
+#                    all_tasks = np.concatenate((dropped_tasks, all_tasks), axis=0)
+                if len(to_concat) > 0:
+                    all_tasks = np.concatenate(to_concat, axis=0)
+
+                tot_tasks += len(all_tasks)
                 print daily_start.date(), len(all_tasks) 
                 daily_tasks.append([daily_start.date(), all_tasks])
 
-
+            print "Tot num tasks %s" % tot_tasks
             with PdfPages('{0}_task_plot.pdf'.format(filename)) as pdf:
-                y_sep = 6
+                y_sep = 5
                 y = 0
 
+                fig = plt.figure(figsize=(8, 9))
                 mpl.rcParams['font.size'] = 6
 
                 # 
@@ -322,25 +353,31 @@ class RoutineAnalyser(cmd.Cmd):
                     y += y_sep
                     y_label_points.append(y)
                     y_labels.append(task_date.strftime('%A, %B %d %Y'))
+#                    print task_date.strftime('%A, %B %d %Y')
                     for task_time in task_times:
+#                        print "\t", task_time[0], task_time[1], task_time[2]
                         self.draw_task(y, task_time[0], task_time[1], task_time[2])        
-                    
                     
                 plt.ylim(0, y + y_sep)
 
                 x_label_points = []
                 x_labels = []
-                for hour in range(self.daily_start.hour-1, self.daily_end.hour+1):
-                    seconds_per_hour = 60 * 60
+#                for hour in range(self.daily_start.hour, self.daily_end.hour):
+                seconds_per_hour = 60 * 60
+                for hour in range(10, 17):
                     x_label_points.append(hour * seconds_per_hour)
                     x_labels.append('%s:00' % hour)
+
+                plt.xlim(seconds_per_hour * 9.5, seconds_per_hour * 16.5)
 
                 plt.xticks(x_label_points, x_labels, rotation='vertical')
                 plt.yticks(y_label_points, y_labels, rotation='horizontal')
 
-                lgd = plt.legend(loc='lower right', bbox_to_anchor=(1,1), ncol=2, prop={'size': 8})
+                plt.gcf().tight_layout()
 
-                # plt.gcf().tight_layout()
+                lgd = plt.legend(loc='lower right', bbox_to_anchor=(1,1), ncol=3, prop={'size': 8})
+
+                plt.savefig('{0}_task_plot.png'.format(filename), bbox_extra_artists=(lgd,), bbox_inches='tight', dpi=400)
                 pdf.savefig(bbox_extra_artists=(lgd,), bbox_inches='tight')
                 plt.close()
                 

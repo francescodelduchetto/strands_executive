@@ -42,7 +42,7 @@ if __name__ == '__main__':
                         end_date=end,
                         )
         # print len(results)
-        # print results
+        print results
         task_query.summarise(results)
 
         

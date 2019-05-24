@@ -179,9 +179,9 @@ def init():
 
     tz = pytz.timezone(pytz.country_timezones['gb'][0])
 
-    analysis_start = datetime(2016,5,23,5,00,tzinfo=tz)
+    analysis_start = datetime(2019,5,1,5,00,tzinfo=tz)
     # analysis_end = datetime(2016,6,6,23,00,tzinfo=tz)
-    analysis_end = datetime(2016,8,10,23,00,tzinfo=tz)
+    analysis_end = datetime(2019,5,4,23,00,tzinfo=tz)
 
     create_task_summary_docs(event_msg_store, event_collection, summary_collection, reprocess=False)
     summarise_actions(summary_collection, start_date=analysis_start, end_date=analysis_end)    

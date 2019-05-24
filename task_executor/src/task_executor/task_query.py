@@ -154,7 +154,7 @@ def start_of_new_group(event, open_group):
 def print_group(group):
     print '['
     for event in group:
-        print event.task.task_id, event.event, rostime_to_python(event.task.start_after), rostime_to_python(event.time)
+        print event.task.action, event.task.task_id, event.event, rostime_to_python(event.task.start_after), rostime_to_python(event.time)
     print ']'
 
 
@@ -181,7 +181,7 @@ def group(results, group_length = 0):
 
         # adds or demands always signal new groups
         if event.event == TaskEvent.ADDED or event.event == TaskEvent.DEMANDED:
-            print 'creating new group for event %s, %s, %s' % (event.task.task_id, task_event_string(event.event), rostime_to_python(event.time))        
+            print 'creating new group for event %s, %s, %s, %s' % (event.task.task_id, task_event_string(event.event), rostime_to_python(event.time), event.task.action)        
             to_add = [event]
         else:
             to_add = None
@@ -189,7 +189,7 @@ def group(results, group_length = 0):
             for event_group in groups:
                 # print ros_duration_to_string(event.time - event_group[-1].time)
                 if (event.time - event_group[-1].time) > match_time_threshold:
-                    print 'creating new group for event %s, %s, %s (out of time range)' % (event.task.task_id, task_event_string(event.event), rostime_to_python(event.time))
+                    print 'creating new group for event %s, %s, %s, %s (out of time range)' % (event.task.task_id, task_event_string(event.event), rostime_to_python(event.time), event.task.action)
                     to_add = [event]
                     break
                 elif event.task.task_id == event_group[-1].task.task_id:
@@ -200,16 +200,17 @@ def group(results, group_length = 0):
                         event_group[-1].event != TaskEvent.ROUTINE_STARTED and \
                         event_group[-1].event != TaskEvent.ROUTINE_STOPPED and \
                         event_group[-1].event != TaskEvent.CANCELLED_MANUALLY:
-                        print 'joining %s, %s, %s to %s, %s, %s' % (event.task.task_id, task_event_string(event.event), rostime_to_python(event.time), event_group[-1].task.task_id, task_event_string(event_group[-1].event), rostime_to_python(event_group[-1].time))
+                        print 'joining %s, %s, %s, %s to %s, %s, %s' % (event.task.task_id, task_event_string(event.event), rostime_to_python(event.time), event.task.action, event_group[-1].task.task_id, task_event_string(event_group[-1].event), rostime_to_python(event_group[-1].time))
                         event_group.append(event)
                         break
                     else:
-                        print 'creating new group for event %s, %s, %s (id matched, but incorrect state)' % (event.task.task_id, task_event_string(event.event), rostime_to_python(event.time))
+                        print 'creating new group for event %s, %s, %s, %s (id matched, but incorrect state)' % (event.task.task_id, task_event_string(event.event), rostime_to_python(event.time), event.task.action)
                         to_add = [event]
                         break
 
-        if to_add is not None:
-            groups.appendleft(to_add)
+        if to_add is not None and len(to_add) == group_length:
+           # print to_add 
+           groups.appendleft(to_add)
 
 
 
@@ -219,8 +220,8 @@ def group(results, group_length = 0):
     # reverse so the first event group is first in the list
     groups.reverse()
 
-    # for g in groups:
-    #     print_group(g)
+    for g in groups:
+        print_group(g)
 
     return groups
 
@@ -249,7 +250,7 @@ def group_sequential(results, group_length = 0):
             if group_length == 0 or len(open_group) == group_length:
                 groups.append(open_group)
             open_group = []
-        
+
         open_group.append(event)
 
     # any remaining bits
@@ -261,8 +262,8 @@ def group_sequential(results, group_length = 0):
     # this is done using the logged time of the last event in the gourp
     groups.sort(key=lambda g: g[-1].time.to_sec())
 
-    # for g in groups:
-    #     print_group(g)
+#    for g in groups:
+#        print_group(g)
 
     return groups
 
@@ -352,11 +353,12 @@ def autonomy_time(window_start, window_end, msg_store):
 
 
 
-def task_groups_in_window(window_start, window_end, msg_store, event=None):
+def task_groups_in_window(window_start, window_end, msg_store, event=None, action=None):
     """A generator which returns groups of events for tasks during the given window.
     """
-    results = query_tasks(msg_store, 
-        event=event,             
+    results = query_tasks(msg_store,
+        event=event,
+        action=action,
         start_date=window_start,
         end_date=window_end)
 
@@ -364,7 +366,9 @@ def task_groups_in_window(window_start, window_end, msg_store, event=None):
     if event is not None:
         group_length = len(event)
 
-    groups = group(results, group_length)
+#    print results
+    groups = group_sequential(results, group_length)
+
     for g in groups:
         yield g
 
@@ -441,6 +445,45 @@ def reconstruct_routines(results, min_tasks=1, allow_open=True):
         # if this is the last event and it's not an event, close routine here
         if i == len(results) - 1 and start is not None:
             dummy_end = TaskEvent(event = TaskEvent.ROUTINE_STOPPED, task = Task(), time = event.time)
+            if task_count >= min_tasks:
+                print 'closing unterminated routine at the end'
+                routines.append((start, dummy_end))
+
+
+    return routines
+
+
+def reconstruct_tasks(results, min_tasks=1, allow_open=True):
+    """Pair up routine starts and ends. This typically requires all task events to infer end of earlier unclosed routines.
+    """
+
+    routines = []
+    start = None
+    task_count = 0
+
+    # make sure we just have the pairs which are start/end
+    for i in range(len(results)):
+        event = results[i][0]
+        print event.event, event.task.action, rostime_to_python(event.time)
+        if event.event == TaskEvent.TASK_STARTED:
+            if start is not None:
+                # need to close previous routine
+                dummy_end = TaskEvent(event = TaskEvent.TASK_STOPPED, task = Task(), time = results[i-1][0].time)
+                if task_count >= min_tasks:
+                    print 'closing unterminated routine'
+                    routines.append((start, dummy_end))
+            start = event
+            task_count = 0
+        elif event.event in [TaskEvent.TASK_STOPPED, TaskEvent.DROPPED, TaskEvent.TASK_SUCCEEDED] and start is not None:
+            if task_count >= min_tasks:
+                routines.append((start, event))
+            start = None
+        else:
+            task_count += 1
+
+        # if this is the last event and it's not an event, close routine here
+        if i == len(results) - 1 and start is not None:
+            dummy_end = TaskEvent(event = TaskEvent.TASK_STOPPED, task = Task(), time = event.time)
             if task_count >= min_tasks:
                 print 'closing unterminated routine at the end'
                 routines.append((start, dummy_end))
